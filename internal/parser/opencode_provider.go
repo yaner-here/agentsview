@@ -179,7 +179,10 @@ func (p *openCodeFormatProvider) Parse(
 			SkipReason:        SkipNoSession,
 		}, nil
 	}
-	if sqliteSource && req.Fingerprint.Hash != "" {
+	// Projection readers already returned a digest from the content's read
+	// transaction. Keep it rather than replacing it with discovery's snapshot.
+	if sqliteSource && req.Fingerprint.Hash != "" &&
+		!strings.HasPrefix(sess.File.Hash, openCodeChildDigestPrefix) {
 		sess.File.Hash = req.Fingerprint.Hash
 	}
 	return ParseOutcome{

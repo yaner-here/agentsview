@@ -247,6 +247,10 @@ func ForEachOpenCodeSessionMeta(
 			openCodeCompositeCountsExpr +
 			" FROM session s" + openCodeCompositeMtimeJoins
 	}
+	query, err = openCodeProjectionFreshnessQuery(db, dbPath, query, false)
+	if err != nil {
+		return err
+	}
 
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -303,6 +307,10 @@ func openCodeSessionCompositeMtime(
 			" FROM session s" + openCodeSessionCompositeMtimeJoins +
 			" WHERE s.id = ?"
 	}
+	query, err = openCodeProjectionFreshnessQuery(db, dbPath, query, true)
+	if err != nil {
+		return 0, "", false, err
+	}
 	var agg openCodeChildAggregate
 	if err := db.QueryRow(query, sessionID).Scan(
 		&agg.watermark, &agg.sessionTime, &agg.projectTime,
@@ -338,6 +346,10 @@ func openCodeSessionWatermark(
 		query = "SELECT " + openCodeSessionCompositeMtimeExpr +
 			" FROM session s" + openCodeSessionCompositeMtimeJoins +
 			" WHERE s.id = ?"
+	}
+	query, err = openCodeProjectionFreshnessQuery(db, dbPath, query, true)
+	if err != nil {
+		return 0, false, err
 	}
 	var watermark int64
 	if err := db.QueryRow(query, sessionID).Scan(&watermark); err != nil {
@@ -446,6 +458,15 @@ func parseOpenCodeDBSession(
 		return nil, nil, err
 	}
 	defer db.Close()
+
+	if projected, err := openCodeHasProjectionCached(db, dbPath); err != nil {
+		return nil, nil, err
+	} else if projected {
+		sess, msgs, found, err := parseOpenCodeProjection(db, dbPath, sessionID, machine)
+		if err != nil || found {
+			return sess, msgs, err
+		}
+	}
 
 	projects, err := loadOpenCodeProjectsCached(db, dbPath)
 	if err != nil {
@@ -709,15 +730,17 @@ type openCodeSessionRow struct {
 	timeUpdated int64
 }
 
-// openCodeSessionSchemaCacheEntry memoizes both schema probes for one
+// openCodeSessionSchemaCacheEntry memoizes the schema probes for one
 // container. Each probe has its own "resolved" flag so populating one never
 // makes the other report a false negative from its zero value.
 type openCodeSessionSchemaCacheEntry struct {
-	state         SQLiteContainerState
-	hasDirectory  bool
-	directoryOnce bool
-	hasComposite  bool
-	compositeOnce bool
+	state          SQLiteContainerState
+	hasDirectory   bool
+	directoryOnce  bool
+	hasComposite   bool
+	compositeOnce  bool
+	hasProjection  bool
+	projectionOnce bool
 }
 
 // openCodeSessionSchemaCache memoizes whether session.directory exists for
@@ -984,8 +1007,12 @@ func openCodeSessionTableHasDirectory(db *sql.DB) (bool, error) {
 	return false, nil
 }
 
+type openCodeQueryer interface {
+	QueryRow(string, ...any) *sql.Row
+}
+
 func loadOneOpenCodeSession(
-	db *sql.DB, sessionID string, hasDirectory bool,
+	db openCodeQueryer, sessionID string, hasDirectory bool,
 ) (openCodeSessionRow, error) {
 	var (
 		row *sql.Row
@@ -1275,7 +1302,31 @@ func buildOpenCodeParsedSession(
 	if !hasUserOrAst || len(parsed) == 0 {
 		return nil, nil, nil
 	}
+	return assembleOpenCodeSession(s, cwd, projectWorktree, filePath, fileMtime, machine, firstMsg, parsed)
+}
 
+func assembleOpenCodeSession(
+	s openCodeSessionRow,
+	cwd, projectWorktree, filePath string,
+	fileMtime int64,
+	machine, firstMsg string,
+	parsed []ParsedMessage,
+) (*ParsedSession, []ParsedMessage, error) {
+	if len(parsed) == 0 {
+		return nil, nil, nil
+	}
+	if firstMsg == "" {
+		if s.title != "" && !isOpenCodeDefaultTitle(s.title) {
+			firstMsg = truncate(s.title, 300)
+		} else {
+			for _, m := range parsed {
+				if m.Role == RoleUser && !m.IsSystem && m.Content != "" {
+					firstMsg = truncate(strings.ReplaceAll(m.Content, "\n", " "), 300)
+					break
+				}
+			}
+		}
+	}
 	project := ExtractProjectFromCwd(projectWorktree)
 	if project == "" {
 		project = "unknown"
@@ -1291,7 +1342,7 @@ func buildOpenCodeParsedSession(
 
 	userCount := 0
 	for _, m := range parsed {
-		if m.Role == RoleUser && m.Content != "" {
+		if m.Role == RoleUser && !m.IsSystem && m.Content != "" {
 			userCount++
 		}
 	}

@@ -643,6 +643,43 @@ add an archived or maintained mirror without replacing the original identity.
 
 ## OpenCode (`opencode`)
 
+**V2 message projections (2026-09-07):** Reverified against the official npm
+`opencode-windows-x64@0.0.0-dev-202609070426` package (registry SHA-512 checked)
+and its freshly initialized, isolated database. It contains `session` and
+`session_message`, not `session_v2`. The reader is grounded in the
+[table definitions](https://github.com/anomalyco/opencode/blob/53fec37d8d2b9e0d92a1b4184e8df8f8480a2d26/packages/core/src/session/sql.ts),
+[projector](https://github.com/anomalyco/opencode/blob/53fec37d8d2b9e0d92a1b4184e8df8f8480a2d26/packages/core/src/session/projector.ts),
+[message schema](https://github.com/anomalyco/opencode/blob/53fec37d8d2b9e0d92a1b4184e8df8f8480a2d26/packages/schema/src/session-message.ts),
+and
+[timestamp defaults](https://github.com/anomalyco/opencode/blob/53fec37d8d2b9e0d92a1b4184e8df8f8480a2d26/packages/core/src/database/schema.sql.ts).
+This is a verified later V2 development layout; the `2.0.0-beta.7` version
+and `session_v2` layout reported in #1642 could not be matched to a public
+release and are not claimed as verified compatibility targets.
+
+`session_message` stores complete typed JSON projections, ordered by `seq`.
+Updates rewrite `data` and `time_updated` without advancing `seq`, so consumers
+must not append raw event deltas or use `MAX(seq)` alone as freshness. For a
+session with projection rows, Agentsview reads that stream instead of merging
+its legacy message/part shadow. Sessions without projections retain the V1
+reader. Projection metadata, content and the archived fingerprint come from
+one read transaction. Freshness includes projection row identity, type,
+sequence and update time alongside the legacy children; single-session queries
+use the producer's `session_id` indexes. The watermark-only watcher path still
+defers child-only updates below the session/project watermark to the next full
+reconciliation, just as for legacy children. Writes that preserve every
+identity and update timestamp remain outside the freshness guarantee.
+
+User attachments have text labels, without expanding data URIs. Assistant
+text, reasoning, tools, model/provider and per-message tokens are retained;
+session totals and persisted currency costs are not added again. Tool result
+content and terminal errors are retained, including nonzero structured Bash
+exit status. System/synthetic records and compaction summaries are marked as
+system content; shell invocations do not count as user prompts. Model/agent
+switch markers are not transcript messages. Unknown message/content shapes
+fail parsing rather than silently replacing an archive with partial content.
+Projection fixtures cover mixed V1/V2 sessions, ordering, updates at unchanged
+sequence and composite time, deletion, tool results, usage and indexed lookups.
+
 **Performance fixture check (2026-09-04):** Rechecked the pinned commit's
 [session tables](https://github.com/anomalyco/opencode/blob/67caf894e0843ee370e72839e8265e483233479b/packages/core/src/session/sql.ts),
 [project tables](https://github.com/anomalyco/opencode/blob/67caf894e0843ee370e72839e8265e483233479b/packages/core/src/project/sql.ts),
