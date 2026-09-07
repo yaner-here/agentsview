@@ -134,9 +134,7 @@ func parseOpenCodeProjection(
 	}
 	defer rows.Close()
 	var parsed []ParsedMessage
-	found := false
 	for rows.Next() {
-		found = true
 		var id, kind, data string
 		var created int64
 		if err := rows.Scan(&id, &kind, &data, &created); err != nil {
@@ -154,20 +152,20 @@ func parseOpenCodeProjection(
 		parsed = append(parsed, m)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, found, err
+		return nil, nil, true, err
 	}
 	if err := rows.Close(); err != nil {
-		return nil, nil, found, err
+		return nil, nil, true, err
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, nil, found, err
+		return nil, nil, true, err
 	}
 	sess, msgs, err := assembleOpenCodeSession(s, cwd, worktree, path+"#"+s.id,
-		agg.watermark*1_000_000, machine, "", parsed)
+		agg.watermark*1_000_000, machine, parsed)
 	if sess != nil {
 		sess.File.Hash = agg.digest(true)
 	}
-	return sess, msgs, found, err
+	return sess, msgs, true, err
 }
 
 type openCodeProjectionContent struct {

@@ -1243,20 +1243,7 @@ func buildOpenCodeParsedSession(
 	parts map[string][]openCodePartRow,
 ) (*ParsedSession, []ParsedMessage, error) {
 
-	var (
-		parsed       []ParsedMessage
-		firstMsg     string
-		hasUserOrAst bool
-		ordinal      int
-	)
-
-	// Prefer OpenCode's LLM-generated title when available.
-	// Skip default placeholders that match OpenCode's exact
-	// format: "New session - " or "Child session - " followed
-	// by an ISO-8601 timestamp.
-	if s.title != "" && !isOpenCodeDefaultTitle(s.title) {
-		firstMsg = truncate(s.title, 300)
-	}
+	var parsed []ParsedMessage
 
 	for _, m := range msgs {
 		var md openCodeMessageData
@@ -1267,7 +1254,6 @@ func buildOpenCodeParsedSession(
 		if role == "" {
 			continue
 		}
-		hasUserOrAst = true
 
 		msgParts := parts[m.id]
 		sort.Slice(msgParts, func(a, b int) bool {
@@ -1280,7 +1266,7 @@ func buildOpenCodeParsedSession(
 		})
 
 		pm := buildOpenCodeMessage(
-			ordinal, role, m.timeCreated, msgParts, cwd,
+			len(parsed), role, m.timeCreated, msgParts, cwd,
 		)
 		applyOpenCodeTokenUsage(&pm, md, m.data, msgParts)
 		if strings.TrimSpace(pm.Content) == "" &&
@@ -1288,42 +1274,31 @@ func buildOpenCodeParsedSession(
 			continue
 		}
 
-		if role == RoleUser && firstMsg == "" {
-			firstMsg = truncate(
-				strings.ReplaceAll(pm.Content, "\n", " "),
-				300,
-			)
-		}
-
 		parsed = append(parsed, pm)
-		ordinal++
 	}
 
-	if !hasUserOrAst || len(parsed) == 0 {
-		return nil, nil, nil
-	}
-	return assembleOpenCodeSession(s, cwd, projectWorktree, filePath, fileMtime, machine, firstMsg, parsed)
+	return assembleOpenCodeSession(s, cwd, projectWorktree, filePath, fileMtime, machine, parsed)
 }
 
 func assembleOpenCodeSession(
 	s openCodeSessionRow,
 	cwd, projectWorktree, filePath string,
 	fileMtime int64,
-	machine, firstMsg string,
+	machine string,
 	parsed []ParsedMessage,
 ) (*ParsedSession, []ParsedMessage, error) {
 	if len(parsed) == 0 {
 		return nil, nil, nil
 	}
-	if firstMsg == "" {
-		if s.title != "" && !isOpenCodeDefaultTitle(s.title) {
-			firstMsg = truncate(s.title, 300)
-		} else {
-			for _, m := range parsed {
-				if m.Role == RoleUser && !m.IsSystem && m.Content != "" {
-					firstMsg = truncate(strings.ReplaceAll(m.Content, "\n", " "), 300)
-					break
-				}
+	// Prefer a generated title; fall back to the first non-system user message.
+	var firstMsg string
+	if s.title != "" && !isOpenCodeDefaultTitle(s.title) {
+		firstMsg = truncate(s.title, 300)
+	} else {
+		for _, m := range parsed {
+			if m.Role == RoleUser && !m.IsSystem && m.Content != "" {
+				firstMsg = truncate(strings.ReplaceAll(m.Content, "\n", " "), 300)
+				break
 			}
 		}
 	}

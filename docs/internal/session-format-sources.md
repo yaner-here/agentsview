@@ -656,6 +656,11 @@ This is a verified later V2 development layout; the `2.0.0-beta.7` version
 and `session_v2` layout reported in #1642 could not be matched to a public
 release and are not claimed as verified compatibility targets.
 
+An isolated real DeepSeek call through this CLI's V2 API also produced user
+and assistant projections. Reading that database with Agentsview preserved
+the prompt, reply, reasoning order, model/provider, and input/output tokens.
+This verifies the parser boundary; a complete archive/HTTP/UI run remains unverified.
+
 `session_message` stores complete typed JSON projections, ordered by `seq`.
 Updates rewrite `data` and `time_updated` without advancing `seq`, so consumers
 must not append raw event deltas or use `MAX(seq)` alone as freshness. For a
